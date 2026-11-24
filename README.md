@@ -19,6 +19,19 @@ sends dependency module paths and versions to that service.
 
 ## Installation
 
+### Download a binary
+
+Download an archive from [GitHub Releases](https://github.com/bgriddaluru/gocve/releases)
+for your operating system (`windows`, `linux`, or `darwin` for macOS) and
+architecture (`amd64` for x86-64 or `arm64`). Extract it and add the executable's
+directory to `PATH`.
+
+Windows archives use `.zip`; Linux and macOS archives use `.tar.gz`. Each release
+includes `checksums.txt` with SHA-256 hashes for verifying the downloads.
+
+Go is not required to run scans with a prebuilt binary. Remediation requires
+`go` on `PATH` and a toolchain compatible with the target project's modules.
+
 ### Install with Go
 
 ```powershell
@@ -106,3 +119,42 @@ gocve --help
 gocve scan --help
 gocve remediate --help
 ```
+
+## Publishing a release
+
+Releases are built by [GitHub Actions](.github/workflows/release.yml) using
+[GoReleaser](.goreleaser.yaml). No Makefile or manually configured token is
+required; the workflow uses GitHub's automatic `GITHUB_TOKEN`.
+
+1. Commit and push the release configuration and any code changes to GitHub.
+   Ensure GitHub Actions is enabled in the repository's **Settings > Actions >
+   General** and repository policies allow the workflow's `contents: write`
+   permission.
+2. Run `go test ./...` and resolve any failures before releasing. The workflow
+   also runs tests and will not publish if they fail.
+3. Tag the commit you want to release with a new semantic version and push it:
+
+   ```powershell
+   git tag v0.1.0
+   git push origin v0.1.0
+   ```
+
+4. Follow the **Release** workflow in the repository's **Actions** tab. On
+   success, the **Releases** page will contain six archives covering Windows,
+   Linux, and macOS on AMD64 and ARM64, plus SHA-256 checksums. The archives
+   include the executable, README, and license.
+
+Use a new version tag for each release. Tags such as `v0.2.0-rc.1` are published
+as prereleases automatically.
+
+For a local packaging check, install
+[GoReleaser v2.20.3](https://github.com/goreleaser/goreleaser/releases/tag/v2.20.3)
+and run from the repository root:
+
+```powershell
+goreleaser check
+goreleaser release --snapshot --clean
+```
+
+Snapshot mode creates archives and checksums in `dist` without publishing a
+GitHub Release. It does not run the workflow's test step; run tests separately.
