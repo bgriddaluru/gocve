@@ -54,14 +54,16 @@ func (c *Client) QueryPackageVulnerabilities(ctx context.Context,
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	validPackages := make([]models.Package, 0, len(packages))
 	for _, pkg := range packages {
 		if strings.TrimSpace(pkg.Path) == "" || strings.TrimSpace(pkg.Version) == "" {
-			return nil, fmt.Errorf("query packages: module path and version must not be empty")
+			continue
 		}
+		validPackages = append(validPackages, pkg)
 	}
 
 	vulns := make(map[string]*models.PackageVulnerability)
-	batcher := NewPackageBatcher(packages) // Create a batcher to yield consecutive groups of at most 1000 packages.
+	batcher := NewPackageBatcher(validPackages) // Create a batcher to yield consecutive groups of at most 1000 packages.
 	for batch := batcher.Next(); len(batch) > 0; batch = batcher.Next() {
 		queries := getBatchQueryFromPackages(batch)
 

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/bgriddaluru/gocve/pkg/models"
+	"github.com/bgriddaluru/gocve/pkg/utils/logger"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -22,7 +23,7 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func testClient(t *testing.T, handle func([]batchQuery) (string, int)) *Client {
 	t.Helper()
-	return &Client{httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	return &Client{logger: logger.NewLogger(false), httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if err := req.Context().Err(); err != nil {
 			return nil, err
 		}
@@ -214,17 +215,54 @@ func TestQueryBatchDoesNotReturnPartialResults(t *testing.T) {
 	}
 }
 
-func TestQueryBatchValidatesInputAndCancellation(t *testing.T) {
+func TestQueryBatchSkipsInvalidPackages(t *testing.T) {
+	invalid := []models.Package{
+		{},
+		{Path: "example.com/a"},
+		{Version: "v1.0.0"},
+		{Path: " ", Version: "v1.0.0"},
+		{Path: "example.com/a", Version: " \t"},
+	}
+	client := testClient(t, func([]batchQuery) (string, int) {
+		t.Fatal("unexpected request for invalid packages")
+		return "", 0
+	})
+	vulns, err := client.QueryPackageVulnerabilities(context.Background(), invalid)
+	if err != nil || len(vulns) != 0 {
+		t.Fatalf("findings=%v, err=%v", vulns, err)
+	}
+
+	calls := 0
+	client = testClient(t, func(queries []batchQuery) (string, int) {
+		calls++
+		if len(queries) != 2 || queries[0].Package.Name != "example.com/valid-a" ||
+			queries[0].Version != "v1.0.0" || queries[1].Package.Name != "example.com/valid-b" ||
+			queries[1].Version != "v2.0.0" {
+			t.Fatalf("unexpected queries: %+v", queries)
+		}
+		return `{"results":[{"vulns":[{"id":"GO-A"}]},{"vulns":[{"id":"GO-B"}]}]}`, http.StatusOK
+	})
+	packages := append([]models.Package{invalid[0], {Path: "example.com/valid-a", Version: "v1.0.0"}}, invalid[1:]...)
+	packages = append(packages, models.Package{Path: "example.com/valid-b", Version: "v2.0.0"}, invalid[0])
+	vulns, err = client.QueryPackageVulnerabilities(context.Background(), packages)
+	if err != nil || len(vulns) != 2 || calls != 1 {
+		t.Fatalf("findings=%v, calls=%d, err=%v", vulns, calls, err)
+	}
+	for key, id := range map[string]string{
+		"example.com/valid-a@v1.0.0": "GO-A",
+		"example.com/valid-b@v2.0.0": "GO-B",
+	} {
+		if pkg := vulns[key]; pkg == nil || pkg.VulnSummary[id] == nil {
+			t.Fatalf("missing %s for %s", id, key)
+		}
+	}
+}
+
+func TestQueryBatchCancellation(t *testing.T) {
 	client := testClient(t, func([]batchQuery) (string, int) {
 		t.Fatal("unexpected request")
 		return "", 0
 	})
-	for _, pkg := range []models.Package{{Path: "example.com/a"}, {Version: "v1.0.0"}, {Path: " ", Version: "v1.0.0"}} {
-		if _, err := client.QueryPackageVulnerabilities(context.Background(), []models.Package{pkg}); err == nil {
-			t.Fatalf("accepted invalid package: %+v", pkg)
-		}
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := client.QueryPackageVulnerabilities(ctx, []models.Package{{Path: "example.com/a", Version: "v1.0.0"}}); !errors.Is(err, context.Canceled) {
