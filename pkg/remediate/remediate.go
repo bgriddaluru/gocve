@@ -55,8 +55,8 @@ func (r *Remediator) remediateVulns(ctx context.Context, moduleLayout *models.Mo
 			if err != nil {
 				return err
 			}
-			if updated {
 
+			if updated {
 				r.logger.Info("Syncing workspace:", ws.Path)
 				if err := r.syncWorkspace(ctx, ws.Path); err != nil {
 					return err
@@ -100,10 +100,8 @@ func (r *Remediator) remediateVulnsInModule(ctx context.Context, modulePath stri
 		}
 	}
 
-	if updated {
-		if err := r.tidyModule(ctx, modulePath); err != nil {
-			return updated, err
-		}
+	if err := r.tidyModule(ctx, modulePath); err != nil {
+		return updated, err
 	}
 	return updated, nil
 }
@@ -112,7 +110,9 @@ func (r *Remediator) upgradePackage(ctx context.Context, workspaceDir, packageNa
 	if !strings.HasPrefix(version, "v") {
 		version = "v" + version
 	}
-	cmd := exec.CommandContext(ctx, "go", "get", fmt.Sprintf("%s@%s", packageName, version))
+	targetPackageURL := fmt.Sprintf("%s@%s", packageName, version)
+	r.logger.Debug("Executing 'go get", targetPackageURL, "in workspace:", workspaceDir)
+	cmd := exec.CommandContext(ctx, "go", "get", targetPackageURL)
 	cmd.Dir = workspaceDir
 
 	output, err := cmd.CombinedOutput()
@@ -124,6 +124,7 @@ func (r *Remediator) upgradePackage(ctx context.Context, workspaceDir, packageNa
 }
 
 func (r *Remediator) syncWorkspace(ctx context.Context, workspaceDir string) error {
+	r.logger.Debug("Executing 'go work sync' in workspace:", workspaceDir)
 	cmd := exec.CommandContext(ctx, "go", "work", "sync")
 	cmd.Dir = workspaceDir
 
@@ -135,14 +136,15 @@ func (r *Remediator) syncWorkspace(ctx context.Context, workspaceDir string) err
 	return nil
 }
 
-func (r *Remediator) tidyModule(ctx context.Context, workspaceDir string) error {
+func (r *Remediator) tidyModule(ctx context.Context, modulePath string) error {
+	r.logger.Debug("Executing 'go mod tidy' in module:", modulePath)
 	cmd := exec.CommandContext(ctx, "go", "mod", "tidy")
-	cmd.Dir = workspaceDir
+	cmd.Dir = modulePath
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("go mod tidy in %q: %w\n%s",
-			workspaceDir, err, strings.TrimSpace(string(output)))
+			modulePath, err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }
