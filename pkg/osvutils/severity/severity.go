@@ -20,20 +20,30 @@ func GetSeverity(assessment models.Severity) (string, error) {
 }
 
 // CalculateSeverity selects the highest CVSS score, falling back to Ubuntu priority.
-// An empty assessment list returns an empty rating.
+// An empty assessment list returns UNKNOWN.
 func CalculateSeverity(assessments []models.Severity) (string, error) {
 	highestScore := -1.0
 	cvssRating := "UNKNOWN"
+	ubuntuRating := ""
+	priorities := map[string]int{"negligible": 1, "low": 2, "medium": 3, "high": 4, "critical": 5}
 	for _, assessment := range assessments {
 		score, rating, err := CalculateScore(assessment)
-		// println("Assessment Type:", assessment.Type, "Score:", assessment.Score, "Rating:", rating)
 		if err != nil {
 			return "", err
+		}
+		if assessment.Type == "Ubuntu" {
+			if priorities[rating] > priorities[ubuntuRating] {
+				ubuntuRating = rating
+			}
+			continue
 		}
 		if score > highestScore {
 			highestScore = score
 			cvssRating = rating
 		}
+	}
+	if highestScore < 0 && ubuntuRating != "" {
+		return ubuntuRating, nil
 	}
 	return cvssRating, nil
 }

@@ -74,16 +74,19 @@ func TestQueryBatchSplitsPackages(t *testing.T) {
 				queried += len(queries)
 				return `{"results":[` + strings.Join(results, ",") + `]}`, http.StatusOK
 			})
-			ids, err := client.QueryPackageVulnerabilities(context.Background(), packages)
+			vulns, err := client.QueryPackageVulnerabilities(context.Background(), packages)
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := []string{}
-			if count > 0 {
-				want = []string{"GO-shared"}
+			if len(vulns) != count || queried != count || calls != (count+999)/1000 {
+				t.Fatalf("packages=%d, queried=%d, calls=%d", len(vulns), queried, calls)
 			}
-			if !reflect.DeepEqual(ids, want) || queried != count || calls != (count+999)/1000 {
-				t.Fatalf("ids=%v, queried=%d, calls=%d", ids, queried, calls)
+			for _, pkg := range packages {
+				got := vulns[pkg.Path+"@"+pkg.Version]
+				if got == nil || got.PackageName != pkg.Path || got.InstalledVersion != pkg.Version ||
+					len(got.VulnSummary) != 1 || got.VulnSummary["GO-shared"] == nil {
+					t.Fatalf("unexpected findings for %s: %+v", pkg.Path, got)
+				}
 			}
 		})
 	}
@@ -147,13 +150,29 @@ func TestQueryBatchPagination(t *testing.T) {
 			return "", 0
 		}
 	})
-	ids, err := client.QueryPackageVulnerabilities(context.Background(), []models.Package{
+	vulns, err := client.QueryPackageVulnerabilities(context.Background(), []models.Package{
 		{Path: "example.com/a", Version: "v1.0.0"},
 		{Path: "example.com/b", Version: "v2.0.0"},
 		{Path: "example.com/c", Version: "v3.0.0"},
 	})
-	if err != nil || !reflect.DeepEqual(ids, []string{"GO-A", "GO-B", "GO-C", "GO-D"}) || calls != 3 {
-		t.Fatalf("ids=%v, calls=%d, err=%v", ids, calls, err)
+	if err != nil || len(vulns) != 3 || calls != 3 {
+		t.Fatalf("packages=%d, calls=%d, err=%v", len(vulns), calls, err)
+	}
+	for key, want := range map[string][]string{
+		"example.com/a@v1.0.0": {"GO-A", "GO-C"},
+		"example.com/b@v2.0.0": {"GO-B"},
+		"example.com/c@v3.0.0": {"GO-D"},
+	} {
+		got := vulns[key]
+		if got == nil || len(got.VulnSummary) != len(want) {
+			t.Fatalf("unexpected findings for %s: %+v", key, got)
+		}
+		for _, id := range want {
+			summary := got.VulnSummary[id]
+			if summary == nil || summary.ID != id || !reflect.DeepEqual(summary.Aliases, []string{id}) {
+				t.Fatalf("unexpected summary for %s in %s: %+v", id, key, summary)
+			}
+		}
 	}
 }
 

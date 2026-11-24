@@ -12,8 +12,6 @@ import (
 	"github.com/bgriddaluru/gocve/pkg/models"
 )
 
-// Package describes a versioned Go module. URL is its module path, not an HTTPS URL.
-
 type batchQuery struct {
 	Package struct {
 		Name      string `json:"name"`
@@ -52,6 +50,15 @@ type batchResult struct {
 
 func (c *Client) QueryPackageVulnerabilities(ctx context.Context,
 	packages []models.Package) (map[string]*models.PackageVulnerability, error) {
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	for _, pkg := range packages {
+		if strings.TrimSpace(pkg.Path) == "" || strings.TrimSpace(pkg.Version) == "" {
+			return nil, fmt.Errorf("query packages: module path and version must not be empty")
+		}
+	}
 
 	vulns := make(map[string]*models.PackageVulnerability)
 	batcher := NewPackageBatcher(packages) // Create a batcher to yield consecutive groups of at most 1000 packages.
@@ -93,15 +100,22 @@ func (c *Client) QueryPackageVulnerabilities(ctx context.Context,
 // 1. An individual query within the queryset returns more than 1,000 vulnerabilities
 // 2. The entire queryset returns more than 3,000 vulnerabilities total
 func (c *Client) queryPaginatedBatch(ctx context.Context, queries []batchQuery) ([]batchResult, error) {
-	results := make([]batchResult, 0)
+	results := make([]batchResult, len(queries))
+	indices := make([]int, len(queries))
+	for i := range indices {
+		indices[i] = i
+	}
 	for len(queries) > 0 {
 		batchResults, err := c.queryBatch(ctx, queries)
 		if err != nil {
 			return nil, err
 		}
 		paginatedQueries := make([]batchQuery, 0)
+		paginatedIndices := make([]int, 0)
 		for i, result := range batchResults {
-			results = append(results, result)
+			// Continuation requests contain only queries that still have pages.
+			index := indices[i]
+			results[index].Vulns = append(results[index].Vulns, result.Vulns...)
 			if result.NextPageToken != "" {
 				query := queries[i]
 				if result.NextPageToken == query.PageToken {
@@ -109,9 +123,11 @@ func (c *Client) queryPaginatedBatch(ctx context.Context, queries []batchQuery) 
 				}
 				query.PageToken = result.NextPageToken
 				paginatedQueries = append(paginatedQueries, query)
+				paginatedIndices = append(paginatedIndices, index)
 			}
 		}
 		queries = paginatedQueries
+		indices = paginatedIndices
 	}
 	return results, nil
 }

@@ -71,7 +71,7 @@ func TestHighestSeverity(t *testing.T) {
 		assessments []models.Severity
 		rating      string
 	}{
-		{"missing", nil, ""},
+		{"missing", nil, "UNKNOWN"},
 		{"highest not first", []models.Severity{v3, v2, v4}, "CRITICAL"},
 		{"highest first", []models.Severity{v2, v4, v3}, "CRITICAL"},
 		{"score rather than version", []models.Severity{v4Zero, v3}, "MEDIUM"},

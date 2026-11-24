@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"reflect"
-	"strings"
 	"testing"
 )
 
@@ -40,12 +39,8 @@ func TestSubcommandFlags(t *testing.T) {
 			}
 			rootCmd.SetArgs([]string{name, "--path", t.TempDir(), "--debug=false"})
 			err = rootCmd.ExecuteContext(context.Background())
-			if name == "scan" {
-				if err != nil {
-					t.Fatalf("scan of empty directory failed: %v", err)
-				}
-			} else if err == nil || !strings.Contains(err.Error(), "remediate execution is not implemented yet") {
-				t.Fatalf("expected unimplemented remediation error, got %v", err)
+			if err != nil {
+				t.Fatalf("%s of empty directory failed: %v", name, err)
 			}
 
 		})
@@ -74,7 +69,7 @@ func TestSubcommandCancellation(t *testing.T) {
 	}
 }
 
-func TestScanIgnoreFlags(t *testing.T) {
+func TestSubcommandIgnoreFlags(t *testing.T) {
 	scanCmd, _, err := rootCmd.Find([]string{"scan"})
 	if err != nil {
 		t.Fatal(err)
@@ -91,8 +86,9 @@ func TestScanIgnoreFlags(t *testing.T) {
 		if flag.DefValue != "false" {
 			t.Fatalf("%s default = %q, want false", name, flag.DefValue)
 		}
-		if remediateCmd.Flags().Lookup(name) != nil {
-			t.Fatalf("scan-only flag %q registered on remediate", name)
+		remediateFlag := remediateCmd.Flags().Lookup(name)
+		if remediateFlag == nil || remediateFlag.DefValue != "false" {
+			t.Fatalf("remediate flag %q missing or has incorrect default", name)
 		}
 		t.Cleanup(func() {
 			if err := scanCmd.Flags().Set(name, "false"); err != nil {
