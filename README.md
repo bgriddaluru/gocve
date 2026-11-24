@@ -56,6 +56,14 @@ The examples below use `gocve` installed on `PATH`. If you built locally, use
 
 ## Usage
 
+Display the installed version:
+
+```powershell
+gocve --version
+```
+
+Release binaries report the release version; local builds report `dev`.
+
 ### Scan
 
 Scan the current directory and its subdirectories:
@@ -110,6 +118,7 @@ Both `scan` and `remediate` accept these flags:
 | `--path` | `.` | Root directory to search for Go modules and workspaces. |
 | `--skip-dirs` | None | Directory names to skip, comma-separated or supplied through repeated flags. |
 | `--debug` | `false` | Enable debug logging. |
+| `--json-output` | None | Also write a JSON report to the specified file, overwriting an existing report. |
 | `--ignore-unfixed` | `false` | Exclude findings without a known fixed version. |
 | `--ignore-unknown-severity` | `false` | Exclude findings with missing or unknown severity. |
 | `-h`, `--help` | | Show command help. |
@@ -119,6 +128,123 @@ gocve --help
 gocve scan --help
 gocve remediate --help
 ```
+
+### JSON reports for scripts
+
+Tables and progress messages remain enabled. Use `--json-output` to also save a
+separate machine-readable report:
+
+```powershell
+gocve scan --json-output scan-results.json
+gocve remediate --json-output remediation-results.json
+```
+
+The destination's parent directory must already exist. Use a dedicated report
+path, not an existing project file: an existing destination is overwritten.
+Before doing any work, the command writes an initial report with
+`"completed": false`, replacing stale results and checking the destination.
+Final reports are written through a temporary file in the same directory and
+renamed into place. An unwritable destination fails the command before scanning
+or remediation starts; a later report-writing failure also returns an error.
+An interrupted command may leave the initial incomplete report.
+
+Both reports have `schema_version`, `command`, `completed`, and `errors` fields.
+Errors include a `stage`, `message`, and relevant `module` or `package`.
+Empty lists are `[]`, not `null`.
+
+Scan reports contain `modules`, including successfully scanned modules without
+findings. Findings reflect the command's ignore flags:
+
+```json
+{
+  "schema_version": 1,
+  "command": "scan",
+  "completed": true,
+  "errors": [],
+  "modules": [
+    {
+      "path": "/src/myrepo",
+      "findings": [
+        {
+          "package": "example.com/dependency",
+          "installed_version": "v1.0.0",
+          "vulnerability_id": "CVE-2026-1234",
+          "severity": "HIGH",
+          "fixed_version": "v1.2.0",
+          "aliases": ["CVE-2026-1234", "GO-2026-0001"]
+        }
+      ]
+    }
+  ]
+}
+```
+
+Remediation reports contain `changes` and `skipped`:
+
+```json
+{
+  "schema_version": 1,
+  "command": "remediate",
+  "completed": true,
+  "errors": [],
+  "changes": [
+    {
+      "module": "/src/myrepo",
+      "package": "example.com/dependency",
+      "previous_version": "v1.0.0",
+      "requested_version": "v1.2.0",
+      "resolved_version": "v1.3.0",
+      "removed": false,
+      "vulnerability_ids": ["CVE-2026-1234"]
+    }
+  ],
+  "skipped": []
+}
+```
+
+Each change groups successful `go get` requests by module and package.
+`previous_version` is the scanned version, `requested_version` is the last
+successfully requested upgrade target, and `resolved_version` is the selected
+module version reported by `go list -m -json all` after processing, including tidy
+and workspace sync. If tidy removes an unused dependency, `removed` is `true`
+and `resolved_version` is `null`. The resolved version is also `null` if version
+resolution fails, in which case the report includes an error. Other dependencies
+changed indirectly by Go are not enumerated.
+
+Skipped findings include `module`, `package`, `vulnerability_id`, and a reason:
+`no_fixed_version` or `unknown_severity`. Findings excluded by ignore flags are
+not included in this list.
+
+On execution failure, the report preserves earlier results with
+`"completed": false`, and the command exits nonzero. Errors identify the failing
+stage, such as `scan`, `upgrade`, `tidy`, `workspace_sync`, or `resolve_versions`.
+`"completed": true` means execution completed, not that the repository is free
+of vulnerabilities. Upgrades are not automatically verified with another scan.
+A successful scan still exits zero even when it finds vulnerabilities.
+
+PowerShell:
+
+```powershell
+gocve remediate --json-output remediation-results.json
+$exitCode = $LASTEXITCODE
+$result = Get-Content -Raw remediation-results.json | ConvertFrom-Json
+$result.changes | Select-Object package, previous_version, resolved_version
+if ($exitCode -ne 0) { Write-Warning "Command failed; inspect completed and errors." }
+```
+
+Linux (requires `jq`):
+
+```bash
+gocve remediate --json-output remediation-results.json
+status=$?
+jq '.changes[] | {package, previous_version, resolved_version}' remediation-results.json
+if [ "$status" -ne 0 ]; then
+    echo "Command failed; inspect completed and errors." >&2
+fi
+```
+
+Always check command errors: if the report could not be written, do not treat an
+existing file as the current result.
 
 ## Publishing a release
 

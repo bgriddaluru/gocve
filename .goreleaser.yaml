@@ -17,7 +17,7 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w
+      - -s -w -X github.com/bgriddaluru/gocve/cmd.Version={{.Version}}
 
 archives:
   - formats:

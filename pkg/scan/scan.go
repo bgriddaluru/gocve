@@ -3,6 +3,7 @@ package scan
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/bgriddaluru/gocve/pkg/advisory"
@@ -14,10 +15,12 @@ import (
 )
 
 type Scanner struct {
-	advisory *advisory.Advisory
-	cache    *cache.Cache
-	logger   *logger.Logger
-	config   models.Config
+	advisory interface {
+		QueryVulnerabilities(context.Context, []models.Package) (map[string]*models.PackageVulnerability, error)
+	}
+	cache  *cache.Cache
+	logger *logger.Logger
+	config models.Config
 }
 
 func NewScanner(config models.Config) *Scanner {
@@ -31,16 +34,37 @@ func NewScanner(config models.Config) *Scanner {
 	}
 }
 
-func (s *Scanner) Scan(ctx context.Context) error {
+func (s *Scanner) Scan(ctx context.Context) (result models.ScanResult, err error) {
+	result = models.NewScanResult()
+	defer func() {
+		result.Completed = err == nil
+		sort.Slice(result.Modules, func(i, j int) bool { return result.Modules[i].Path < result.Modules[j].Path })
+	}()
 	if err := ctx.Err(); err != nil {
-		return err
+		result.AddError("scan", "", "", err)
+		return result, err
 	}
 	// Detect module layout and gather packages
 	moduleClient := gomod.NewClient(s.logger)
 	moduleLayout, err := moduleClient.DiscoverModuleLayout(ctx, s.config.Path, s.config.SkipDirs)
 	if err != nil {
 		s.logger.Error("Failed to discover module layout:", err)
-		return err
+		result.AddError("discover", "", "", err)
+		return result, err
+	}
+
+	scanModule := func(path string) error {
+		if err := ctx.Err(); err != nil {
+			result.AddError("scan", path, "", err)
+			return err
+		}
+		vulns, err := s.ScanModule(ctx, path)
+		if err != nil {
+			result.AddError("scan", path, "", err)
+			return err
+		}
+		result.Modules = append(result.Modules, models.NewModuleScanResult(path, vulns))
+		return nil
 	}
 
 	// Workspace modules
@@ -48,30 +72,26 @@ func (s *Scanner) Scan(ctx context.Context) error {
 		s.logger.Debug("Workspace:", ws.Path)
 		s.logger.Debug("====================================")
 		for _, mod := range ws.Modules {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			_, err := s.ScanModule(ctx, mod.Path)
-			if err != nil {
-				return err
+			if err := scanModule(mod.Path); err != nil {
+				return result, err
 			}
 		}
 	}
 
 	for _, mod := range moduleLayout.StandaloneModules {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
 		s.logger.Debug("Standalone Module:", mod.Path)
 		s.logger.Debug("====================================")
-		_, err := s.ScanModule(ctx, mod.Path)
-		if err != nil {
-			return err
+		if err := scanModule(mod.Path); err != nil {
+			return result, err
 		}
 
 	}
 
-	return ctx.Err()
+	if err := ctx.Err(); err != nil {
+		result.AddError("scan", "", "", err)
+		return result, err
+	}
+	return result, nil
 }
 
 func (s *Scanner) ScanModule(ctx context.Context, modulePath string) (map[string]*models.PackageVulnerability, error) {

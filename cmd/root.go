@@ -15,9 +15,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var Version = "dev"
+
 var rootCmd = &cobra.Command{
-	Use:   "gocve",
-	Short: "Scan and remediate vulnerabilities in Go repositories",
+	Use:     "gocve",
+	Short:   "Scan and remediate vulnerabilities in Go repositories",
+	Version: Version,
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -49,6 +52,7 @@ func init() {
 		subcommand.Flags().String("path", ".", "Path to the Go repository")
 		subcommand.Flags().StringSlice("skip-dirs", nil, "Directory names to skip (comma-separated or repeated)")
 		subcommand.Flags().Bool("debug", false, "Enable debug logging")
+		subcommand.Flags().String("json-output", "", "Also write a JSON report to this file (overwrites existing report)")
 		rootCmd.AddCommand(subcommand)
 		subcommand.Flags().Bool("ignore-unfixed", false, "Exclude vulnerabilities without a known fixed version")
 		subcommand.Flags().Bool("ignore-unknown-severity", false, "Exclude vulnerabilities with unknown severity")
@@ -62,7 +66,9 @@ func runScan(cmd *cobra.Command, args []string) error {
 	}
 
 	scanner := scan.NewScanner(config)
-	return scanner.Scan(cmd.Context())
+	return runWithJSONReport(cmd, models.NewScanResult(), func() (models.ScanResult, error) {
+		return scanner.Scan(cmd.Context())
+	})
 }
 
 func runRemediation(cmd *cobra.Command, args []string) error {
@@ -72,7 +78,9 @@ func runRemediation(cmd *cobra.Command, args []string) error {
 	}
 
 	remediator := remediate.NewRemediator(config)
-	return remediator.Remediate(cmd.Context())
+	return runWithJSONReport(cmd, models.NewRemediationResult(), func() (models.RemediationResult, error) {
+		return remediator.Remediate(cmd.Context())
+	})
 }
 
 func buildConfig(cmd *cobra.Command) (models.Config, error) {
