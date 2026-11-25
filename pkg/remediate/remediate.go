@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
-	"slices"
 	"sort"
 	"strings"
 
@@ -24,7 +23,7 @@ type Remediator struct {
 	scanner interface {
 		ScanModule(context.Context, string) (map[string]*models.PackageVulnerability, error)
 	}
-	runGo    func(context.Context, string, ...string) ([]byte, error)
+	runGo    func(context.Context, *logger.Logger, string, ...string) ([]byte, error)
 	advisory *advisory.Advisory
 	cache    *cache.Cache
 	logger   *logger.Logger
@@ -105,10 +104,6 @@ func (r *Remediator) remediateVulnsInModule(ctx context.Context, modulePath stri
 	r.logger.Info("Remediating vulnerabilities in module:", modulePath)
 	module := models.NewModuleScanResult(modulePath, pkgVulns)
 
-	slices.SortFunc(module.Findings, func(a, b models.Finding) int {
-		return strings.Compare(b.Package, a.Package)
-	})
-
 	for _, vuln := range module.Findings {
 		// Skip remediation if there is no fixed version available or severity is unknown
 		if vuln.FixedVersion == "" {
@@ -169,7 +164,7 @@ func (r *Remediator) resolveChanges(ctx context.Context, result *models.Remediat
 	sort.Strings(paths)
 	var errs []error
 	for _, path := range paths {
-		output, err := r.runGo(ctx, path, "list", "-m", "-json", "all")
+		output, err := r.runGo(ctx, r.logger, path, "list", "-m", "-json", "all")
 		versions := make(map[string]string)
 		if err == nil {
 			decoder := json.NewDecoder(bytes.NewReader(output))
@@ -216,29 +211,34 @@ func (r *Remediator) resolveChanges(ctx context.Context, result *models.Remediat
 	return errors.Join(errs...)
 }
 
-func (r *Remediator) upgradePackage(ctx context.Context, workspaceDir, packageName, version string) error {
+func (r *Remediator) upgradePackage(ctx context.Context, moudulePath, packageName, version string) error {
 	if !strings.HasPrefix(version, "v") {
 		version = "v" + version
 	}
 	targetPackageURL := fmt.Sprintf("%s@%s", packageName, version)
-	r.logger.Debug("Executing 'go get", targetPackageURL, "in workspace:", workspaceDir)
-	_, err := r.runGo(ctx, workspaceDir, "get", targetPackageURL)
+	// https://github.com/golang/go/issues/58116 - ensure the module is downloaded before running 'go get' to avoid issues with version resolution
+	_, err := r.runGo(ctx, r.logger, moudulePath, "mod", "download", targetPackageURL)
+	if err != nil {
+		return err
+	}
+	_, err = r.runGo(ctx, r.logger, moudulePath, "get", targetPackageURL)
 	return err
 }
 
 func (r *Remediator) syncWorkspace(ctx context.Context, workspaceDir string) error {
-	r.logger.Debug("Executing 'go work sync' in workspace:", workspaceDir)
-	_, err := r.runGo(ctx, workspaceDir, "work", "sync")
+	_, err := r.runGo(ctx, r.logger, workspaceDir, "work", "sync")
 	return err
 }
 
 func (r *Remediator) tidyModule(ctx context.Context, modulePath string) error {
-	r.logger.Debug("Executing 'go mod tidy' in module:", modulePath)
-	_, err := r.runGo(ctx, modulePath, "mod", "tidy")
+	_, err := r.runGo(ctx, r.logger, modulePath, "mod", "tidy")
 	return err
 }
 
-func runGoCommand(ctx context.Context, dir string, args ...string) ([]byte, error) {
+func runGoCommand(ctx context.Context, logger *logger.Logger, dir string, args ...string) ([]byte, error) {
+	if logger != nil {
+		logger.Debug("Executing 'go", strings.Join(args, " "), "in", dir)
+	}
 	cmd := exec.CommandContext(ctx, "go", args...)
 	cmd.Dir = dir
 	var stderr bytes.Buffer

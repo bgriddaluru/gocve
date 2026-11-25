@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/bgriddaluru/gocve/pkg/models"
+	"github.com/bgriddaluru/gocve/pkg/utils/logger"
 )
 
 type moduleScannerFunc func(context.Context, string) (map[string]*models.PackageVulnerability, error)
@@ -52,7 +53,7 @@ func TestRemediationResult(t *testing.T) {
 		return remediationFindings(), nil
 	})
 	var commands []string
-	r.runGo = func(_ context.Context, dir string, args ...string) ([]byte, error) {
+	r.runGo = func(_ context.Context, _ *logger.Logger, dir string, args ...string) ([]byte, error) {
 		if dir != r.config.Path {
 			t.Fatalf("unexpected module: %s", dir)
 		}
@@ -77,7 +78,8 @@ func TestRemediationResult(t *testing.T) {
 		t.Fatalf("incorrect skip reasons: %+v", result.Skipped)
 	}
 	want := []string{
-		"get example.com/a@v1.2.0", "get example.com/a@v1.3.0",
+		"mod download example.com/a@v1.2.0", "get example.com/a@v1.2.0",
+		"mod download example.com/a@v1.3.0", "get example.com/a@v1.3.0",
 		"mod tidy", "list -m -json all",
 	}
 	if !reflect.DeepEqual(commands, want) {
@@ -98,9 +100,9 @@ func TestRemediationPartialResults(t *testing.T) {
 				return remediationFindings(), nil
 			})
 			failure := errors.New("operation failed")
-			r.runGo = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			r.runGo = func(_ context.Context, _ *logger.Logger, _ string, args ...string) ([]byte, error) {
 				if (stage == "upgrade" && args[0] == "get" && args[1] == "example.com/a@v1.3.0") ||
-					(stage == "tidy" && args[0] == "mod") ||
+					(stage == "tidy" && args[0] == "mod" && args[1] == "tidy") ||
 					(stage == "workspace_sync" && args[0] == "work") ||
 					(stage == "resolve_versions" && args[0] == "list") {
 					return nil, failure
@@ -133,7 +135,7 @@ func TestRemediationVersionResolutionErrors(t *testing.T) {
 			r.scanner = moduleScannerFunc(func(context.Context, string) (map[string]*models.PackageVulnerability, error) {
 				return remediationFindings(), nil
 			})
-			r.runGo = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			r.runGo = func(_ context.Context, _ *logger.Logger, _ string, args ...string) ([]byte, error) {
 				if args[0] == "list" {
 					return []byte(output), nil
 				}
@@ -153,7 +155,7 @@ func TestRemediationReportsDependencyRemovedByTidy(t *testing.T) {
 	r.scanner = moduleScannerFunc(func(context.Context, string) (map[string]*models.PackageVulnerability, error) {
 		return remediationFindings(), nil
 	})
-	r.runGo = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+	r.runGo = func(_ context.Context, _ *logger.Logger, _ string, args ...string) ([]byte, error) {
 		if args[0] == "list" {
 			return []byte(`{"Path":"example.com/test","Main":true}`), nil
 		}
@@ -181,7 +183,7 @@ func TestRemediationWithNoUpgrades(t *testing.T) {
 				}
 				return findings, nil
 			})
-			r.runGo = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			r.runGo = func(_ context.Context, _ *logger.Logger, _ string, args ...string) ([]byte, error) {
 				if !reflect.DeepEqual(args, []string{"mod", "tidy"}) {
 					t.Fatalf("unexpected command without upgrades: %v", args)
 				}
