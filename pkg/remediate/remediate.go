@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"slices"
 	"sort"
 	"strings"
 
@@ -103,6 +104,11 @@ func (r *Remediator) remediateVulnsInModule(ctx context.Context, modulePath stri
 	}
 	r.logger.Info("Remediating vulnerabilities in module:", modulePath)
 	module := models.NewModuleScanResult(modulePath, pkgVulns)
+
+	slices.SortFunc(module.Findings, func(a, b models.Finding) int {
+		return strings.Compare(b.Package, a.Package)
+	})
+
 	for _, vuln := range module.Findings {
 		// Skip remediation if there is no fixed version available or severity is unknown
 		if vuln.FixedVersion == "" {
